@@ -177,7 +177,7 @@ async def check_reminders(bot: Bot):
                     for user in users:
                         lang = user['lang']
                         # Format as rich notification
-                        header = get_text(lang, "reminder_text").format(team=team_name, home=m['home'], away=m['away'])
+                        header = get_text(lang, "reminder_text").format(team=team_name)
                         
                         # Use format_match_info with 'Upcoming' status
                         match_info = format_match_info(lang, m['home'], m['away'], m['score'], "Upcoming", False, False, "")
