@@ -34,6 +34,22 @@ async def start_scheduler(bot: Bot):
             print(f"Scheduler Loop Error: {e}")
             await asyncio.sleep(10)
 
+def format_match_info(lang, home, away, score, status_text, is_live, is_finished, match_time):
+    status_icon = "⏳"
+    if is_live:
+        status_icon = "🔴"
+    elif is_finished:
+        status_icon = "🔚"
+        
+    s_text = status_text
+    if status_text == "HT":
+        s_text = get_text(lang, "ht_text")
+    elif match_time and match_time.isdigit():
+        s_text = f"{match_time}'"
+
+    status_part = f" | {status_icon} <b>{s_text}</b>" if s_text else f" | {status_icon}"
+    return f"⚽ {home} {score} {away}\n{status_part}"
+
 async def check_live_notifications(bot: Bot):
     """
     Check matches for events (Start, Goal, HT, 2nd Half, FT) and notify fans.
@@ -45,9 +61,6 @@ async def check_live_notifications(bot: Bot):
 
     # Pass interested teams to API to ensure we get their matches
     all_matches = api.get_all_matches(interested_team_ids=interested_teams)
-    
-    # We care about matches that are Live or recently Finished (to catch FT event)
-    # Actually, we need to inspect all of them to catch 'Started' even if they just started.
     
     for m in all_matches:
         match_id = m['id']
@@ -66,11 +79,9 @@ async def check_live_notifications(bot: Bot):
         if is_live and not database.is_goal_notified(match_id, "start"):
             events_to_notify.append(("start", "game_start_text"))
         
-        # 2. Goals (Existing logic)
-        # Only check goals if game is live or just finished
+        # 2. Goals
         if (is_live or is_finished) and score_str and score_str != "0 - 0" and score_str != "v":
              if not database.is_goal_notified(match_id, score_str):
-                 # Store full event for processing
                  events_to_notify.append(("goal", "goal_text"))
 
         # 3. Half Time
@@ -78,10 +89,6 @@ async def check_live_notifications(bot: Bot):
             events_to_notify.append(("ht", "ht_notify_text"))
 
         # 4. Second Half Started
-        # Condition: Live, Time > 45, NOT HT, and HT was already notified (or imply it passed)
-        # Simple check: If time is like 46, 47... and we haven't notified 2nd_half
-        # But time format is string. safe check: if match is live, not HT, and we have recorded 'ht' event?
-        # Or just checking if minute > 45 is enough?
         try:
             minute = int(match_time) if match_time and match_time.isdigit() else 0
             if is_live and minute > 45 and status_text != "HT" and not database.is_goal_notified(match_id, "2nd_half"):
@@ -102,21 +109,17 @@ async def check_live_notifications(bot: Bot):
         target_users = {u['id']: u for u in home_fans + away_fans}.values()
 
         if not target_users:
-            # Mark all pending events as notified to avoid re-checking loop
             for event_type, _ in events_to_notify:
                 key = score_str if event_type == "goal" else event_type
                 database.mark_goal_notified(match_id, key)
             continue
 
         for event_type, lang_key in events_to_notify:
-            # For goal: key is score_str. For others: key is event_type literal.
             db_key = score_str if event_type == "goal" else event_type
             
-            # Double check inside loop (though list unique)
             if database.is_goal_notified(match_id, db_key):
                 continue
                 
-            # Extra data for message
             extra = ""
             if event_type == "goal":
                  match_events = api.get_match_events(match_id)
@@ -127,29 +130,18 @@ async def check_live_notifications(bot: Bot):
             for user in target_users:
                 lang = user['lang']
                 
-                # Construct Message
-                # We need keys in locales.py: game_start_text, ht_text_notify, 2nd_half_text, ft_text
-                # Note: 'ht_text' might already exist for display in handlers. assume we need new ones or reuse.
-                # Construct text based on event
-                
-                msg = ""
+                header = get_text(lang, lang_key)
                 if event_type == "goal":
-                     msg = get_text(lang, "goal_text").format(home=home_name, away=away_name, score=score_str, event=extra)
-                else:
-                     # Generic format for status updates
-                     # We can use a generic template or specific simple texts
-                     # Let's assume we add these keys to locales.py
-                     t_key = lang_key
-                     base_msg = get_text(lang, t_key)
-                     # Most messages need home/away teams
-                     msg = f"{base_msg}\n\n⚽ {home_name} {score_str} {away_name}"
+                    header = header.format(home=home_name, away=away_name, score=score_str, event=extra)
+                
+                match_info = format_match_info(lang, home_name, away_name, score_str, status_text, is_live, is_finished, match_time)
+                msg = f"{header}\n\n{match_info}"
                 
                 try:
-                    await bot.send_message(user['id'], msg, reply_markup=keyboards.get_notification_keyboard())
+                    await bot.send_message(user['id'], msg, reply_markup=keyboards.get_notification_keyboard(), parse_mode="HTML")
                 except Exception as ex:
                     pass
             
-            # Mark as done
             database.mark_goal_notified(match_id, db_key)
 
 async def check_reminders(bot: Bot):
@@ -168,10 +160,10 @@ async def check_reminders(bot: Bot):
         for m in matches:
             try:
                 iso_str = m['date'].replace("Z", "+00:00")
-                match_time = datetime.fromisoformat(iso_str)
+                match_time_dt = datetime.fromisoformat(iso_str)
                 now = datetime.now(timezone.utc)
                 
-                diff = match_time - now
+                diff = match_time_dt - now
                 minutes_diff = diff.total_seconds() / 60
                 
                 if 50 <= minutes_diff <= 65:
@@ -184,13 +176,15 @@ async def check_reminders(bot: Bot):
                     users = database.get_users_by_team(team_id)
                     for user in users:
                         lang = user['lang']
-                        text = get_text(lang, "reminder_text").format(
-                            team=team_name,
-                            home=m['home'], 
-                            away=m['away']
-                        )
+                        # Format as rich notification
+                        header = get_text(lang, "reminder_text").format(team=team_name, home=m['home'], away=m['away'])
+                        
+                        # Use format_match_info with 'Upcoming' status
+                        match_info = format_match_info(lang, m['home'], m['away'], m['score'], "Upcoming", False, False, "")
+                        msg = f"{header}\n\n{match_info}"
+                        
                         try:
-                            await bot.send_message(user['id'], text, reply_markup=keyboards.get_notification_keyboard())
+                            await bot.send_message(user['id'], msg, reply_markup=keyboards.get_notification_keyboard(), parse_mode="HTML")
                         except Exception as ex:
                             print(f"Failed to send reminder to {user['id']}: {ex}")
                             
