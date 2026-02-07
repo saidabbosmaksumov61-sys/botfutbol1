@@ -132,10 +132,10 @@ async def check_live_notifications(bot: Bot):
                 
                 header = get_text(lang, lang_key)
                 if event_type == "goal":
-                    header = header.format(home=home_name, away=away_name, score=score_str, event=extra)
-                
-                match_info = format_match_info(lang, home_name, away_name, score_str, status_text, is_live, is_finished, match_time)
-                msg = f"{header}\n\n{match_info}"
+                    msg = header.format(home=home_name, away=away_name, score=score_str, event=extra)
+                else:
+                    match_info = format_match_info(lang, home_name, away_name, score_str, status_text, is_live, is_finished, match_time)
+                    msg = f"{header}\n\n{match_info}"
                 
                 try:
                     await bot.send_message(user['id'], msg, reply_markup=keyboards.get_notification_keyboard(), parse_mode="HTML")
