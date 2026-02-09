@@ -41,22 +41,38 @@ async def main():
     bot = Bot(token=config.BOT_TOKEN)
     dp = Dispatcher()
     
-    # Register Middleware
-    # dp.message.middleware(SubscriptionMiddleware())
-    # dp.callback_query.middleware(SubscriptionMiddleware())
-    
     dp.include_router(handlers.router)
     
     print("Bot ishga tushdi (DB + Scheduler + WebServer)...")
     
-    # Start Scheduler in background
-    asyncio.create_task(scheduler.start_scheduler(bot))
+    # Start Scheduler and Web Server
+    scheduler_task = asyncio.create_task(scheduler.start_scheduler(bot))
+    web_task = asyncio.create_task(start_web_server())
     
-    # Start Dummy Web Server (For Render Port Binding)
-    asyncio.create_task(start_web_server())
-    
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        # Graceful shutdown
+        await bot.session.close()
+        scheduler_task.cancel()
+        web_task.cancel()
+        try:
+            await asyncio.gather(scheduler_task, web_task, return_exceptions=True)
+        except asyncio.CancelledError:
+            pass
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
-    asyncio.run(main())
+    
+    # Use uvloop for better performance on Linux if available
+    try:
+        import uvloop
+        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+        print("Using uvloop for better performance.")
+    except ImportError:
+        pass
+
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        print("Bot stopped.")
