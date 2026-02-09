@@ -4,6 +4,9 @@ import os
 import config
 
 def get_connection():
+    # Log connection attempt (hiding password for security)
+    info = config.DATABASE_URL.split('@')[-1] if config.DATABASE_URL else "None"
+    print(f"Connecting to database: {info}")
     return psycopg2.connect(config.DATABASE_URL, sslmode='require')
 
 def init_db():
