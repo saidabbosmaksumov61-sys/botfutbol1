@@ -120,19 +120,12 @@ async def check_live_notifications(bot: Bot):
             if database.is_goal_notified(match_id, db_key):
                 continue
                 
-            extra = ""
-            if event_type == "goal":
-                 match_events = api.get_match_events(match_id)
-                 extra = match_events[-1] if match_events else "Goal!"
-
-            print(f"Notifying {event_type} for Match {match_id}")
-
             for user in target_users:
                 lang = user['lang']
-                
                 header = get_text(lang, lang_key)
+                
                 if event_type == "goal":
-                    msg = header.format(home=home_name, away=away_name, score=score_str, event=extra)
+                    msg = header.format(home=home_name, away=away_name, score=score_str)
                 else:
                     match_info = format_match_info(lang, home_name, away_name, score_str, status_text, is_live, is_finished, match_time)
                     msg = f"{header}\n\n{match_info}"
